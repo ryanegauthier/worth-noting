@@ -106,4 +106,24 @@ describe("Support debug log delivery", () => {
     expect(body.ok).toBe(true);
     expect(body.delivery.webhook.success).toBe(true);
   });
+
+  it("includes the article URL in both the email body and the webhook payload", async () => {
+    mockSendMail.mockResolvedValue({});
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    const res = await supportDebugLog(baseUrl, realFetch, {
+      logs: ["log1"],
+      url: "https://example.com/some-article",
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+
+    const emailArg = mockSendMail.mock.calls[0][0];
+    expect(emailArg.text).toContain("Last scanned URL: https://example.com/some-article");
+
+    const webhookBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(webhookBody.url).toBe("https://example.com/some-article");
+  });
 });

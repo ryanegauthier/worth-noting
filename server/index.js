@@ -149,12 +149,13 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
     `Support request from Liars Ledger`,
     `Version: ${payload.version || "unknown"}`,
     `Token: ${payload.tokenId || "unknown"}`,
+    `Last scanned URL: ${payload.url || "unknown"}`,
     "",
     "Full session log:",
     preview,
   ].join("\n");
 
-  console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"}`);
+  console.log(`[support] token=${payload.tokenId || "unknown"} version=${payload.version || "unknown"} url=${payload.url || "unknown"}`);
   console.log(`[support] logs:\n${preview}`);
 
   // Retry helper for transient webhook failures (429, 5xx)
@@ -222,6 +223,7 @@ app.post("/api/support/debug-log", supportLimiter, wrap(async (req, res) => {
         body: JSON.stringify({
           tokenId: payload.tokenId || null,
           version: payload.version || null,
+          url: payload.url || null,
           logs,
         }),
       });
@@ -306,7 +308,7 @@ const checkoutLimiter = rateLimit({
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.11", ts: new Date().toISOString() });
+  res.json({ status: "ok", version: process.env.npm_package_version || "0.17.12", ts: new Date().toISOString() });
 });
 
 // ── Registration ──────────────────────────────────────────────────────────────

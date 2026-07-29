@@ -1,4 +1,4 @@
-// Liar's Ledger - popup.js v0.17.11
+// Liar's Ledger - popup.js v0.17.12
 
 const browser = window.browser || window.chrome;
 const toggle         = document.getElementById("enableToggle");
@@ -194,15 +194,22 @@ supportBtn?.addEventListener("click", async () => {
   supportBtn.disabled = true;
 
   try {
-    const [logs, auth] = await Promise.all([
+    const [logs, auth, resultsUrl] = await Promise.all([
       getSessionStorage("ll_debug_log"),
       getSyncStorage("ll_auth_token"),
+      getSessionStorage("ll_results_url"),
     ]);
 
     const payload = {
       tokenId: auth?.tokenId || null,
       logs: Array.isArray(logs) ? logs : [],
       version: browser.runtime.getManifest().version,
+      // The URL of the most recently scanned article, not the current tab -
+      // a debug log covers the whole session (often many articles across
+      // hours, see CHANGELOG), so "current tab" could easily be a page the
+      // user navigated to afterward and never scanned at all. This is the
+      // article the last logged scan actually ran against.
+      url: resultsUrl || null,
     };
 
     const res = await fetch(`${CONFIG?.PROXY_URL || "https://api.liarsledger.com"}/api/support/debug-log`, {

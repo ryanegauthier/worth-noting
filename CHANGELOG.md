@@ -64,6 +64,121 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.12] - 2026-07-19
+
+### Fixed: a bare surname mention could resolve to the wrong member of Congress
+
+User submitted a support debug log (token `397fdc34...`) showing a scan
+that resolved `"Rep. Adam Smith, Rep. Smith, Rep. Sawant"` into two
+unrelated members - Adam Smith (D-WA) from the full name, and Adrian Smith
+(R-NE) from the second, bare `"Rep. Smith"` mention - and reported both in
+the same article's results, even though the article's second mention was
+clearly a same-article back-reference to Adam Smith (standard journalism
+style: full name on first mention, surname alone afterward).
+
+**Root cause**: `src/data/politicians.json`'s alias table can only map a
+bare surname to a single hardcoded `bioguide_id` - `aliases["smith"]` is
+Adrian Smith, unconditionally, regardless of what article it appears in or
+what fuller names were already resolved in the same scan.
+`resolvePolitician()` (`src/lookup.js`) hits that alias directly at its
+"strip title, try again" step for any single-word stripped name, with no
+awareness of the other names being resolved alongside it in the same
+`resolveAll()` call.
+
+**`src/lookup.js`**
+- `resolveAll()` now tracks each last name it resolves during a scan
+  (`lastNameSeen`, keyed by lowercased `last_name` -> a `Set` of the
+  distinct `bioguide_id`s seen for it so far). A later name that strips
+  down to a bare, single-word surname is treated as a back-reference and
+  skipped **only when exactly one** distinct person with that surname has
+  been resolved so far this scan.
+- Caught before shipping (raised in review, not live): an article can name
+  *two* different real members sharing a surname by full name (e.g. both
+  "Adam Smith" and "Jason Smith" discussed in the same piece) before a
+  later bare "Smith." The first version of this fix used a plain
+  last-write-wins map, so that case would have silently collapsed the bare
+  mention into whichever of the two was resolved *most recently* - a
+  confident, specific-sounding guess between two real in-scan candidates,
+  which is worse than the dictionary's already-known-arbitrary fallback,
+  not better. Once a surname has 2+ distinct people resolved this scan, it
+  reverts to unresolved ambiguity and falls through to that same old
+  fallback rather than picking one.
+- Order-dependent by design: only defers to a surname seen *earlier* in
+  the list, matching the full-name-then-surname convention. A bare surname
+  with no fuller mention anywhere earlier in the scan still falls through
+  to the existing (unchanged, still ambiguous when unresolvable any other
+  way) dictionary alias lookup.
+
+**Tests added (`src/test/lookup.test.js`)**: reproduces the exact reported
+scenario against a fixture dictionary mirroring the real ambiguity
+(`aliases["smith"]` -> Adrian Smith); confirms a bare surname alone with no
+prior full-name mention still resolves via the dictionary alias unchanged;
+confirms a bare surname does not suppress a *different*, unrelated
+same-surname person who is resolved later in the list (order still
+matters); confirms two distinct same-surname members resolved earlier in
+the same scan do NOT get a later bare mention guessed onto either of them.
+Array-returning assertions use `.length` + per-element checks rather than
+`deepEqual` against literal arrays, matching `api.test.js`'s existing
+workaround for `vm`-sandboxed values living in a different Array realm
+than the test file's own literals.
+
+**Also (same session)**: the support debug-log upload (`popup.js`'s
+"Send debug log" button, `/api/support/debug-log` in `server/index.js`)
+now includes the URL of the most recently scanned article - `ll_results_url`
+from session storage, not the popup's current active tab, since a debug
+log's logs typically span many articles across a long session and the
+active tab when the button is clicked could easily be a page that was
+never scanned at all. Surfaced in both the support email body ("Last
+scanned URL: ...") and the webhook JSON payload (`url`). Test added in
+`server/test/free/support-delivery.test.js` confirming both.
+
+**Scope note**: this only fixes the same-scan case, where the fuller name
+appears somewhere earlier in the same article. A bare surname with no
+fuller mention anywhere in the article (or where the fuller mention comes
+*after* the bare one) is still whatever single member the dictionary's
+alias table hardcodes - inherent to a bare-surname-to-one-bioguide_id alias
+table, and out of scope here.
+
+### Fixed: Developer Setup instructions never mentioned Redis, and never explained how to load your own build
+
+A contributor followed the README's "Developer Setup" section exactly
+(steps 1-4) and then, finding no instruction on how to actually load the
+extension, continued into the "Install" section's manual-install steps
+(the release-zip path) - and hit a Redis connection error running the
+server.
+
+**Two real gaps, not user error:**
+1. `server/.env.example` and the README's key list never mentioned
+   `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`, even though
+   `server/providers/store.js` requires Redis for install tokens, scan
+   counts, and Square subscription mappings - nearly every request touches
+   it. (`docs/backend-proxy.md`'s own environment variable table already
+   listed both correctly - this was specifically a README/`.env.example`
+   gap, not a codebase-wide one.)
+2. The README's "Developer Setup" section set up `config.js` and the local
+   server but never said to load the extension from the cloned folder, so
+   the natural next step was to keep reading into "Install" - which
+   installs the **release zip**, hardcoded to `PROXY_URL:
+   "https://api.liarsledger.com"` (production). Following both sections in
+   sequence means your own local server and keys are never actually
+   exercised by the extension you loaded.
+
+**`server/.env.example`**: added `UPSTASH_REDIS_REST_URL` /
+`UPSTASH_REDIS_REST_TOKEN` with a comment on where to get a free-tier
+instance and why it's required.
+
+**`README.md`**: "Developer Setup" now explicitly says not to combine it
+with "Install" above; step 2 says to point `PROXY_URL` at your local
+server instead of just "update with your own proxy URL"; added the missing
+Redis bullet; added a step to actually load the extension from the cloned
+folder (not a downloaded zip).
+
+**`docs/contributing.md`**: fixed a stale dictionary-rebuild command
+(`node build-dictionary.js` -> `node scripts/build-dictionary.cjs` - the
+old path doesn't exist).
+
+---
+
 ## [0.17.11] - 2026-07-18
 
 ### Fixed: topic matching could substring-match a generic word inside an unrelated word

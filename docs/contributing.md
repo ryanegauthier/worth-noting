@@ -14,7 +14,7 @@ The dictionary covers the 110th through 119th Congress (3,606 entries). It needs
 - Members change their preferred names
 - Nicknames are missing (the LLM returns a name the dictionary doesn't resolve)
 
-To rebuild: `node build-dictionary.js YOUR_CONGRESS_API_KEY`
+To rebuild: `node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY`
 
 To add a nickname manually, edit `src/lookup.js` - find `FULL_NAME_OVERRIDES` (for full name substitutions) or `NICKNAME_FIRST` (for first-name substitutions).
 

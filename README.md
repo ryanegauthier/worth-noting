@@ -64,17 +64,21 @@ This is the recommended way to install. No configuration needed.
 
 If you want to fork, contribute, or run your own instance, you'll need your own API keys and backend. The production proxy at `api.liarsledger.com` does not accept requests from unauthorized extension IDs.
 
+**This is a separate path from "Install" above - don't combine them.** The Install section's release zip is hardcoded to talk to the production backend; nothing you set up below will be used unless you load the extension from your own cloned folder (step 5) with `config.js` pointed at your own local server (step 2).
+
 1. Clone this repo
-2. Copy `src/config.example.js` to `src/config.js` - update with your own proxy URL
+2. Copy `src/config.example.js` to `src/config.js` - set `PROXY_URL` (and `CLAUDE_API_ENDPOINT` / `MISTRAL_API_ENDPOINT`) to your local server, e.g. `http://localhost:3001`, matching the `PORT` you set in step 3
 3. Copy `server/.env.example` to `server/.env` - add your own API keys:
    - `CONGRESS_API_KEY` - free at [api.congress.gov/sign-up](https://api.congress.gov/sign-up/)
    - `CLAUDE_API_KEY` - [console.anthropic.com](https://console.anthropic.com)
    - `MISTRAL_API_KEY` - [console.mistral.ai](https://console.mistral.ai)
    - `VOTESMART_EMAIL` / `VOTESMART_PASSWORD` - requires [VoteSmart educational API license](https://votesmart.org/share/api)
-4. `cd server && npm install && npm run dev`
-5. To rebuild the politician dictionary: `node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY`
+   - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` - required, free tier at [upstash.com](https://upstash.com) (create a Redis database, copy the REST URL and REST token from its dashboard). Nearly every request touches Redis for install tokens and scan counts - without this you'll get a Redis error on your first request.
+4. `cd server && npm install && npm run dev` - server runs at `http://localhost:3001` (or your `PORT`)
+5. In `chrome://extensions`, enable Developer mode → Load unpacked → select this cloned repo folder (not a downloaded release zip - that one's pointed at production)
+6. To rebuild the politician dictionary: `node scripts/build-dictionary.cjs YOUR_CONGRESS_API_KEY`
 
-See [docs.liarsledger.com](https://docs.liarsledger.com) for full architecture documentation.
+See [docs.liarsledger.com](https://docs.liarsledger.com) for full architecture documentation, including the full backend environment variable reference.
 
 ## Privacy
 

@@ -228,16 +228,56 @@ async function resolveAll(names) {
   const notMembers    = [];
   const notFound      = [];
 
+  // Bare surname mentions ("Rep. Smith") are ambiguous whenever more than
+  // one current member shares that last name - the dictionary's alias
+  // table can only point a bare surname at one hardcoded bioguide_id.
+  // Confirmed live: "smith" always resolves to Adrian Smith (R-NE)
+  // regardless of context, even in a scan that had already resolved
+  // "Rep. Adam Smith" (D-WA) from a fuller mention moments earlier in the
+  // same article - producing two unrelated members in one report instead
+  // of one. Journalism convention introduces a person by full name once
+  // and refers back to them by surname alone afterward, so within a single
+  // scan, a bare surname already resolved earlier in this same name list
+  // takes priority over the dictionary's single hardcoded alias - but only
+  // when exactly ONE distinct person with that surname has been resolved
+  // so far. An article naming two different same-surname members by full
+  // name (e.g. both "Adam Smith" and "Jason Smith" discussed in the same
+  // piece) before a later bare "Smith" is genuinely ambiguous, not a safe
+  // back-reference to either - guessing between two real in-scan
+  // candidates would be confidently wrong in a new way, worse than the
+  // dictionary's already-known-arbitrary fallback. Once a surname has 2+
+  // distinct bioguide_ids seen this scan, it's treated as unresolved
+  // ambiguity and falls through to that same old fallback instead.
+  const lastNameSeen = new Map(); // lowercased last_name -> Set of bioguide_ids resolved this batch
+
   for (const name of names) {
+    const bareSurname = stripTitle(name);
+    if (bareSurname && !bareSurname.includes(" ")) {
+      const seenIds = lastNameSeen.get(bareSurname);
+      if (seenIds && seenIds.size === 1) {
+        continue;
+      }
+    }
+
     const result = await resolvePolitician(name);
 
     if (result.status === "found") {
       if (!resolved.find(r => r.bioguide_id === result.entry.bioguide_id)) {
         resolved.push({ matched_as: name, ...result.entry });
       }
+      const last = (result.entry.last_name || "").toLowerCase();
+      if (last) {
+        if (!lastNameSeen.has(last)) lastNameSeen.set(last, new Set());
+        lastNameSeen.get(last).add(result.entry.bioguide_id);
+      }
     } else if (result.status === "former") {
       if (!formerMembers.find(r => r.bioguide_id === result.entry.bioguide_id)) {
         formerMembers.push({ matched_as: name, ...result.entry });
+      }
+      const last = (result.entry.last_name || "").toLowerCase();
+      if (last) {
+        if (!lastNameSeen.has(last)) lastNameSeen.set(last, new Set());
+        lastNameSeen.get(last).add(result.entry.bioguide_id);
       }
     } else if (result.status === "not_member") {
       notMembers.push(name);

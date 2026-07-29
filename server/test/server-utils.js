@@ -16,6 +16,7 @@ export function supportDebugLog(baseUrl, fetchImpl, options = {}) {
       tokenId: options.tokenId || "token-123",
       version: options.version || "0.17.6",
       logs: options.logs || ["log1"],
+      url: options.url,
     }),
   });
 }

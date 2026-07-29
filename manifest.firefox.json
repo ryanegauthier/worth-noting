@@ -4,6 +4,13 @@
   "version": "0.17.12",
   "description": "Surfaces voting records of politicians mentioned in news articles.",
 
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "liars-ledger@liarsledger.com",
+      "strict_min_version": "121.0"
+    }
+  },
+
   "permissions": [
     "activeTab",
     "storage"
@@ -12,10 +19,6 @@
   "host_permissions": [
     "https://api.liarsledger.com/*"
   ],
-
-  "externally_connectable": {
-    "matches": ["https://liarsledger.com/*"]
-  },
 
   "background": {
     "service_worker": "background.js"
