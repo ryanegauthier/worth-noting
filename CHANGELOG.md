@@ -64,6 +64,142 @@ The Account panel's "Restore Pro after reinstalling" flow asks users to paste a 
 
 ---
 
+## [0.17.13] - 2026-09-02
+
+### Added: public no-install web scan (`liarsledger.com/scan`)
+
+Marketing site now has a `/scan` page (in the separate
+`liars-ledger-website` repo) letting an anonymous visitor paste an
+article URL and get the same free-tier politician-voting-record output
+the extension's sidebar shows, without installing anything - the
+detected member, their matched roll-call votes/sponsorships, and links
+to the bill and the member's profile. No AI summary, no claim text, no
+verdict - those stay Pro-only and gated exactly as they already are for
+the extension's free tier.
+
+**Deliberately reuses the existing quota/auth system rather than building
+a parallel one.** The web page registers an anonymous token via the
+already-public `POST /register` (same as a fresh extension install),
+stores it in `localStorage`, and authenticates every call with
+`Authorization: Bearer <token>` exactly like the extension and the X bot
+already do. It draws from the *same* `token:{id}` / `scans:{id}:{date}`
+Redis keyspace (`server/providers/store.js`) - no new anonymous-identity
+or IP-based quota scheme, so a visitor who later installs the extension
+carries the same daily allowance rather than getting a second, separate
+one. (Reconciling the two token IDs into one on install - so a returning
+visitor doesn't start a *third*, un-merged allowance - is not built yet;
+flagged as a follow-up, not blocking since the keyspace design already
+supports it without a schema change.)
+
+**Politician resolution and Congress/GovTrack/VoteSmart lookup run in
+the browser**, not on the server: `js/vendor/` in the website repo carries
+unmodified, attributed copies of `src/lookup.js`, `src/api.js`,
+`src/votesmart.js`, `src/topic-match.js`, `src/keywords.js`, `src/llm.js`
+from this repo, loaded via plain `<script src>` with two small shims
+(`browser.storage.session` -> an in-memory `Map`, `browser.runtime.getURL`
+-> a fetch against this repo's new endpoints) rather than the MV3 APIs
+they'd normally run under. This is the exact same trick
+`server/bot/loadExtensionScript.js` already uses to run this logic inside
+a Node `vm` sandbox for the X bot, just in a real browser instead of a
+simulated one - avoids re-deriving matching/lookup logic a third time.
+Considered and rejected: adapting the bot's sandbox directly for this.
+`getExtensionSandbox()` is a module-level singleton with one bot token
+baked into a closure (`if (_sandbox) return _sandbox`); reusing it as-is
+for many concurrent anonymous visitors would run their Congress/VoteSmart/
+GovTrack proxy calls under the *bot's* identity, not the visitor's own -
+a real concurrency bug, not just an inconvenience. Running the pipeline
+client-side sidesteps it entirely instead of fixing shared bot infra for
+a use case it wasn't built for.
+
+**`server/providers/articleFetch.js` (new)** - the one piece of this that
+genuinely can't run in the browser (target news sites don't send CORS
+headers letting `liarsledger.com` `fetch()` their HTML directly), exposed
+as `POST /api/scan/extract`. Readability + jsdom extraction, same
+libraries `server/bot/extractArticle.js` already uses for the X bot (no
+new dependency) - but hardened for a fully public "paste any URL" surface
+where `extractArticle.js`'s existing lack of SSRF protection isn't
+acceptable:
+- DNS-resolves the hostname and rejects any resolved address in a
+  private/loopback/link-local/CGNAT range (`10/8`, `172.16/12`,
+  `192.168/16`, `127/8`, `169.254/16` - covers the AWS/GCP/Azure metadata
+  address too, `::1`, `fc00::/7`), and the same check runs again on every
+  redirect hop rather than trusting fetch's automatic follow, which would
+  only ever validate the *original* host.
+- `redirect: "manual"`, bounded to 3 hops, each re-validated before being
+  followed.
+- Response body streamed with a running byte-count abort (2MB cap) rather
+  than buffered in full first; `Content-Length` checked as a fast path
+  only, not trusted alone.
+- Returns `{title, text}` only - raw HTML is never echoed back to the
+  client.
+
+Not done here, flagged as a follow-up: `server/bot/extractArticle.js`
+has this same missing-SSRF-guard gap and arguably should get it too,
+since tweet-linked URLs are also attacker-influenced, just a smaller/
+more curated pool than a public form. Left alone to keep this change
+scoped to the new public surface.
+
+**`server/providers/politicians.js` (new)** - `GET
+/api/politicians-dictionary`, serving `src/data/politicians.json` (the
+~3,600-entry name-resolution dictionary the extension bundles) so the
+web page's `lookup.js` copy resolves names against the real, always-
+current dictionary via the shimmed `browser.runtime.getURL`, instead of
+a manually-copied static file in the website repo that would silently
+drift out of sync whenever the dictionary is rebuilt. Same in-memory
+6-hour cache pattern as `providers/govtrack.js`'s `legislators()`.
+
+Deliberately **not** behind `requireToken`, unlike every other `/api/*`
+route - found via a manual local end-to-end run (see Tests below):
+`src/lookup.js`'s
+`loadDictionary()` calls plain `fetch(url)` with no auth header at all
+(correct for the real extension, where `browser.runtime.getURL` resolves
+to a locally bundled file needing no auth), so gating this route 401'd
+every request from the unmodified vendor copy, and `loadDictionary()`
+doesn't check for that - it silently treated the error body's missing
+`.members`/`.aliases` as an empty dictionary and crashed `resolveAll` on
+the first lookup. Fixed by dropping the auth requirement rather than
+patching the vendor file: the dictionary needs no gating anyway, since
+it's the same static, non-sensitive dataset already fully public inside
+the downloadable extension bundle - same category as `GET /health`.
+
+**`server/index.js`**: `/api/scan/extract` behind `requireToken` plus a
+new dedicated `extractLimiter` (20/min, keyed by tokenId) separate from
+the general `/api/*` limiter - fetching an arbitrary third-party URL
+server-side is the single most expensive and highest-SSRF-risk call
+available to an anonymous visitor, same reasoning as the existing
+dedicated `registerLimiter`/`checkoutLimiter`. `/api/politicians-dictionary`
+is ungated, per above.
+
+**Explicitly not built this pass** (per the original spec, flagged as
+follow-ups rather than blockers): a bot/abuse challenge (Cloudflare
+Turnstile or similar) on the scan form - shipping v1 on the existing
+per-token daily limit plus the new extraction-route limiter, revisit if
+real abuse shows up; extension-install reconciliation of the anonymous
+web token into the extension's own token on install.
+
+**Tests**: `server/test/free/scan-extract.test.js` - rejects malformed/
+non-http(s) URLs, rejects literal private/link-local IPs and hostnames
+that resolve to them, rejects a redirect that points at a private address
+even from a public starting host, enforces the redirect-hop cap and the
+size cap, confirms raw HTML never appears in the response. Also manually
+ran the whole pipeline end to end (local backend against real Redis/
+Claude/Mistral/Congress.gov/VoteSmart, real `scan.html` DOM driven via
+jsdom with the real `fetch`, since no headless-browser tooling was
+available in this environment) against a real Wikipedia article naming a
+sitting senator - confirmed a result card renders with real Legislation/
+Roll-Call Votes/Vote History/Interest Group Ratings data and zero claim/
+verdict/upsell content anywhere in the output. That run is what caught
+the `/api/politicians-dictionary` auth mismatch above.
+
+**Version bump note**: `CLAUDE.md`'s version-bump file list was stale
+again - same pattern as the note already in that file about
+`background.js`/`popup.js` going missing from it once before.
+`manifest.firefox.json` also carries the version string and wasn't on the
+list; caught by the same "grep for the old version string after bumping"
+check the file already prescribes. Added to the list in `CLAUDE.md`.
+
+---
+
 ## [0.17.12] - 2026-07-19
 
 ### Fixed: a bare surname mention could resolve to the wrong member of Congress
